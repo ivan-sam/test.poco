@@ -5,26 +5,30 @@
 #
 # Makefile for Poco SampleServer
 #
-POCO_BASE = /code/Igrosoft/thirdparty/sources/Poco
+POCO_BASE = thirdparty/sources/poco
 
 CC = g++
 CFLAGS = -I$(POCO_BASE)/include
 LDFLAGS = -L$(POCO_BASE)/lib/Linux/x86_64
-LIBS = -lPocoUtil -lPocoXML -lPocoFoundation -lpthread
+LDLIBS = -lPocoUtil -lPocoXML -lPocoFoundation -lpthread
 
-objects = SampleServer.o
+SOURCE_DIR = src
+OUTPUT_DIR = out
 
-target         = SampleServer
-target_version = 1
-target_libs    = PocoUtil PocoXML PocoFoundation
+sources = $(wildcard $(SOURCE_DIR)/*.cpp)
+objects = $(patsubst %.c,%.o, $(sources))
 
-#include $(POCO_BASE)/build/rules/exec
+target = $(OUTPUT_DIR)/SampleServer
 
 .PHONY: all
-all : $(target)
+all: $(target)
 
-%.o : %.cpp
+%.o: %.cpp
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-$(target) : $(objects)
-	$(CC) -o $@ $^ $(LDFLAGS) $(LIBS)
+$(target): $(objects)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+.PHONY: clean
+clean:
+	rm $(target) $(objects)
