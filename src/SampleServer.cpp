@@ -86,7 +86,7 @@ bool doRequest(Poco::Net::HTTPClientSession& session, Poco::Net::HTTPRequest& re
 	}
 }
 
-getHttpResponse(const std::string& url_text)
+int getHttpResponse(const std::string& url_text)
 {
 	try
 	{
@@ -113,7 +113,7 @@ getHttpResponse(const std::string& url_text)
 			}
 		}
 		
-		StreamCopier::copyStream(rs, std::cout);
+		StreamCopier::copyStream(result_stream, std::cout);
 	}
 	catch (Exception& exc)
 	{
