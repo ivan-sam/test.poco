@@ -15,7 +15,7 @@ POCO_BASE = $(BASE_DIR)/thirdparty/sources/poco
 CPP = g++
 CPPFLAGS = -I$(POCO_BASE)/include
 LDFLAGS = -L$(LIB_DIR)
-LDLIBS = -lPocoUtil -lPocoXML -lPocoFoundation -lpthread
+LDLIBS = -lPocoNet -lPocoUtil -lPocoXML -lPocoFoundation -lpthread
 
 
 sources = $(wildcard $(SOURCE_DIR)/*.cpp)
