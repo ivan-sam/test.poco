@@ -39,10 +39,13 @@
 #include "Poco/Task.h"
 #include "Poco/TaskManager.h"
 #include "Poco/DateTimeFormatter.h"
+#include "Poco/Net/HTMLForm.h"
 #include "Poco/Net/HTTPClientSession.h"
 #include "Poco/Net/HTTPRequest.h"
 #include "Poco/Net/HTTPResponse.h"
 #include <Poco/Net/HTTPCredentials.h>
+#include <Poco/Net/NameValueCollection.h>
+#include <Poco/NullStream.h>
 #include "Poco/StreamCopier.h"
 #include "Poco/NullStream.h"
 #include "Poco/Path.h"
@@ -65,63 +68,11 @@ using Poco::Net::HTTPClientSession;
 using Poco::Net::HTTPRequest;
 using Poco::Net::HTTPResponse;
 using Poco::Net::HTTPMessage;
+using Poco::Net::NameValueCollection;
 using Poco::StreamCopier;
 using Poco::Path;
 using Poco::URI;
 using Poco::Exception;
-
-bool doRequest(Poco::Net::HTTPClientSession& session, Poco::Net::HTTPRequest& request, Poco::Net::HTTPResponse& response, std::istream& result_stream)
-{
-	session.sendRequest(request);
-	std::istream& rs = session.receiveResponse(response);
-	std::cout << response.getStatus() << " " << response.getReason() << std::endl;
-	if (response.getStatus() != Poco::Net::HTTPResponse::HTTP_UNAUTHORIZED)
-	{
-		result_stream = rs;
-		return true;
-	}
-	else
-	{
-		return false;
-	}
-}
-
-int getHttpResponse(const std::string& url_text)
-{
-	try
-	{
-		URI uri(url_text);
-		std::string path(uri.getPathAndQuery());
-		if (path.empty()) path = "/";
-
-        std::string username;
-        std::string password;
-        Poco::Net::HTTPCredentials::extractCredentials(uri, username, password);
-        Poco::Net::HTTPCredentials credentials(username, password);
-
-		HTTPClientSession session(uri.getHost(), uri.getPort());
-		HTTPRequest request(HTTPRequest::HTTP_GET, path, HTTPMessage::HTTP_1_1);
-		HTTPResponse response;
-		std::istream& result_stream = NULL;
-		if (!doRequest(session, request, response, result_stream))
-		{
-            credentials.authenticate(request, response);
-			if (!doRequest(session, request, response, result_stream))
-			{
-				std::cerr << "Invalid username or password" << std::endl;
-				return 1;
-			}
-		}
-		
-		StreamCopier::copyStream(result_stream, std::cout);
-	}
-	catch (Exception& exc)
-	{
-		std::cerr << exc.displayText() << std::endl;
-		return 1;
-	}
-	return 0;
-}
 
 class SampleTask: public Task
 {
@@ -193,10 +144,93 @@ protected:
 		helpFormatter.format(std::cout);
 	}
 
+  std::istream& makeHttpRequest(Poco::Net::HTTPClientSession& session, Poco::Net::HTTPRequest& request, Poco::Net::HTTPResponse& response, Poco::Net::HTMLForm *postParams = NULL)
+  {
+    std::ostream& requestStream = session.sendRequest(request);
+    if (postParams && request.getMethod() != HTTPRequest::HTTP_GET)
+      postParams->write(requestStream);
+
+    std::istream *respStream = &(session.receiveResponse(response));
+
+    if (response.getStatus() == Poco::Net::HTTPResponse::HTTP_UNAUTHORIZED)
+    {
+      // See note on http://pocoproject.org/docs/Poco.Net.HTTPCredentials.html
+      Poco::NullOutputStream nos;
+      StreamCopier::copyStream(*respStream, nos);
+      std::string username;
+      std::string password;
+      Poco::Net::HTTPCredentials::extractCredentials(request.getURI(), username, password);
+      if (!username.empty())
+      {
+        Poco::Net::HTTPCredentials credentials(username, password);
+        credentials.authenticate(request, response);
+        std::ostream& requestStream = session.sendRequest(request);
+        if (postParams && request.getMethod() != HTTPRequest::HTTP_GET)
+          postParams->write(requestStream);
+        respStream = &(session.receiveResponse(response));
+      }
+    }
+    
+    if (response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK)
+    {
+      session.reset();
+      throw new Poco::ApplicationException(
+        Poco::format("Could not get response from web method '%s' - HTTP code %i", request.getURI(), (int)response.getStatus()));
+    }
+    return *respStream;
+  }
+
+  Poco::Net::NameValueCollection& makeWebMethodCall(const std::string& methodUrl, Poco::Net::NameValueCollection& params, const std::string& httpMethod = HTTPRequest::HTTP_GET)
+  {
+    URI methodUri(methodUrl);
+    std::string path(methodUri.getPathAndQuery());
+    if (path.empty())
+      path = "/";
+
+    Poco::Net::HTMLForm requestForm;
+    for (Poco::Net::NameValueCollection::ConstIterator iter = params.begin(); iter != params.end(); ++iter)
+      requestForm.add(iter->first, iter->second);
+
+    HTTPClientSession session(methodUri.getHost(), methodUri.getPort());
+    HTTPRequest request(httpMethod, path, HTTPMessage::HTTP_1_1);
+    HTTPResponse response;
+
+    std::istream* resultStream;
+    requestForm.prepareSubmit(request);
+    if (httpMethod == HTTPRequest::HTTP_GET)
+      resultStream = &(makeHttpRequest(session, request, response));
+    else
+      resultStream = &(makeHttpRequest(session, request, response, &requestForm));
+
+    Poco::Net::HTMLForm *responseForm = new Poco::Net::HTMLForm();
+    responseForm->read(*resultStream);
+
+    return *responseForm;
+  }
+
 	int main(const std::vector<std::string>& args)
 	{
 		if (!_helpRequested)
 		{
+			Poco::Net::HTMLForm form;
+			form.add("param1", "value1");
+			form.add("param2", "value2");
+			Poco::Net::NameValueCollection& res = makeWebMethodCall("http://code-online.azurewebsites.net/test.aspx", form);
+
+			for (Poco::Net::NameValueCollection::ConstIterator iter = res.begin(); iter != res.end(); ++iter)
+			{
+				std::cout << "[ " << iter->first << " : " << iter->second << " ]" << std::endl;
+			}
+			delete &res;
+
+			Poco::Net::NameValueCollection& res2 = makeWebMethodCall("http://code-online.azurewebsites.net/test.aspx", form, HTTPRequest::HTTP_POST);
+
+			for (Poco::Net::NameValueCollection::ConstIterator iter = res2.begin(); iter != res2.end(); ++iter)
+			{
+				std::cout << "[ " << iter->first << " : " << iter->second << " ]" << std::endl;
+			}
+			delete &res2;
+
 			TaskManager tm;
 			tm.start(new SampleTask);
 			waitForTerminationRequest();
